@@ -40,8 +40,12 @@ RECORDING_FILE = os.getenv("VOICE_AI_RECORDING_FILE", "command.wav")
 # SPEECH TO TEXT
 # ==========================================
 
-# "auto", "faster-whisper" or "whisper" (openai-whisper, no PyAV).
+# "auto", "faster-whisper", "whisper" (openai-whisper) or "openai" (API).
 STT_BACKEND = os.getenv("VOICE_AI_STT_BACKEND", "auto")
+
+OPENAI_TRANSCRIBE_MODEL = os.getenv(
+    "VOICE_AI_OPENAI_TRANSCRIBE_MODEL", "whisper-1"
+)
 
 WHISPER_MODEL = os.getenv("VOICE_AI_WHISPER_MODEL", "base")
 WHISPER_DEVICE = os.getenv("VOICE_AI_WHISPER_DEVICE", "cpu")
