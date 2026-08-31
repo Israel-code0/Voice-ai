@@ -1,13 +1,18 @@
+"""Manual check: transcribe a recording with the OpenAI Whisper API.
+
+Requires OPENAI_API_KEY. The main assistant uses local faster-whisper instead.
+"""
+
 import os
+import sys
 
-import sounddevice as sd
-from scipy.io.wavfile import write
-from dotenv import load_dotenv
-from openai import OpenAI
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-load_dotenv()
+import sounddevice as sd  # noqa: E402
+from scipy.io.wavfile import write  # noqa: E402
+from openai import OpenAI  # noqa: E402
 
-SAMPLE_RATE = 16000
+import config  # noqa: E402
 
 
 def get_client():
@@ -27,17 +32,20 @@ def record_audio(filename="command.wav", duration=5):
     print("🎙️ Listening...")
 
     recording = sd.rec(
-        int(duration * SAMPLE_RATE),
-        samplerate=SAMPLE_RATE,
+        int(duration * config.SAMPLE_RATE),
+        samplerate=config.SAMPLE_RATE,
         channels=1,
-        dtype="int16"
+        dtype="int16",
+        device=config.MICROPHONE_DEVICE
     )
 
     sd.wait()
 
-    write(filename, SAMPLE_RATE, recording)
+    write(filename, config.SAMPLE_RATE, recording)
 
     print("Recording finished.")
+
+    return filename
 
 
 def transcribe_audio(filename="command.wav", client=None):
@@ -57,9 +65,9 @@ def main():
 
     client = get_client()
 
-    record_audio()
+    filename = record_audio()
 
-    print("You said:", transcribe_audio(client=client))
+    print("You said:", transcribe_audio(filename, client=client))
 
 
 if __name__ == "__main__":

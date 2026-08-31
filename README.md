@@ -6,11 +6,35 @@ A personal voice-controlled AI assistant for Windows.
 
 - Speech-to-text using Whisper
 - Microphone input
+- Spoken responses (pyttsx3)
 - Open Windows applications
 - Keyboard control
 - Mouse control
 - Open websites
 - Basic voice command processing
+
+## Project Structure
+
+```
+main.py                     entry point: listen -> parse -> act
+config.py                   settings, app and website tables
+agent/brain.py              turns transcribed text into an Intent
+agent/tools.py              maps intents onto the functions that run them
+computer/applications.py    launching apps and websites
+computer/keyboard.py        typing and key presses
+computer/mouse.py           clicking and scrolling
+voice/speech_to_text.py     microphone recording + Whisper
+voice/text_to_speech.py     spoken replies
+scripts/                    manual checks (microphone, OpenAI API)
+tests/                      unit tests for the command grammar
+```
+
+`agent/brain.py` has no audio or GUI dependencies, so the command grammar can
+be tested without a microphone:
+
+```bash
+python -m unittest discover -s tests
+```
 
 ## Current Commands
 
@@ -24,6 +48,7 @@ Examples:
 - Press Space
 - Go to Google
 - Go to YouTube
+- Go to GitHub
 - Scroll down
 - Scroll up
 - Click
