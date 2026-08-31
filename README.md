@@ -92,24 +92,31 @@ Optional environment variables:
   microphone). Run `python -c "import sounddevice; print(sounddevice.query_devices())"`
   to list the available devices.
 - `VOICE_AI_WHISPER_MODEL` - Whisper model size, defaults to `base`.
-- `VOICE_AI_STT_BACKEND` - `auto` (default), `faster-whisper` or `whisper`.
-  See below.
+- `VOICE_AI_STT_BACKEND` - `auto` (default), `faster-whisper`, `whisper` or
+  `openai`. See below.
+- `VOICE_AI_OPENAI_TRANSCRIBE_MODEL` - API model, defaults to `whisper-1`.
 - `VOICE_AI_SPEECH` - set to `0` to disable spoken replies.
-- `OPENAI_API_KEY` - only needed by the scripts in `scripts/`, read from a
-  `.env` file.
+- `OPENAI_API_KEY` - needed by the `openai` backend and the scripts in
+  `scripts/`, read from a `.env` file.
 
 ## Speech recognition backends
 
-`faster-whisper` is used by default. It depends on PyAV, whose bundled DLLs are
-blocked by Windows Smart App Control on some machines:
+`auto` tries these in order and keeps the first one that loads:
+
+1. `faster-whisper` - fastest, runs locally, imports PyAV.
+2. `whisper` - openai-whisper, runs locally, no PyAV or ffmpeg, imports torch.
+3. `openai` - Whisper API, no local model, needs `OPENAI_API_KEY`.
+
+The fallbacks exist because Windows Smart App Control blocks the native
+libraries the local models load:
 
 ```
 ImportError: DLL load failed while importing hwaccel:
 An Application Control policy has blocked this file.
 ```
 
-When that happens the assistant falls back to `openai-whisper`, which needs
-neither PyAV nor ffmpeg because the recorded samples are passed to the model
-directly. Force a backend with `VOICE_AI_STT_BACKEND=whisper`, or turn off
-Smart App Control (Windows Security -> App & browser control) to keep using
-faster-whisper.
+On a machine where that happens to both PyAV and torch, put an
+`OPENAI_API_KEY` in `.env` and the API backend takes over; audio is sent as an
+in-memory wav so nothing extra is written to disk. Turning off Smart App
+Control (Windows Security -> App & browser control) makes the local backends
+usable again.

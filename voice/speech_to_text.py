@@ -1,21 +1,30 @@
 """Microphone recording and Whisper transcription.
 
-Two backends are supported because `faster-whisper` depends on PyAV, whose
-bundled DLLs are blocked by Windows Smart App Control on some machines:
+Three backends are supported because the native libraries the local models
+load (PyAV for faster-whisper, torch for openai-whisper) are blocked by
+Windows Smart App Control on some machines:
 
-- ``faster-whisper`` (default, fastest)
-- ``whisper`` (openai-whisper, PyAV free)
+- ``faster-whisper`` (default, fastest, needs PyAV)
+- ``whisper`` (openai-whisper, no PyAV or ffmpeg, needs torch)
+- ``openai`` (Whisper API, no native code at all, needs OPENAI_API_KEY)
 
-Both are fed the recorded samples directly, so neither needs ffmpeg.
-Set ``VOICE_AI_STT_BACKEND`` to force one; the default ``auto`` tries
-faster-whisper first and falls back when its import fails.
+Set ``VOICE_AI_STT_BACKEND`` to force one; the default ``auto`` walks the
+list and keeps the first one that loads.
 """
+
+import io
+import os
+import wave
 
 import numpy as np
 import sounddevice as sd
 from scipy.io.wavfile import write
 
 import config
+
+
+class BackendUnavailable(Exception):
+    """Raised when a backend cannot run here, so 'auto' should try the next."""
 
 
 class FasterWhisperBackend:
@@ -35,13 +44,13 @@ class FasterWhisperBackend:
 
     def transcribe(self, samples):
 
-        segments, _info = self.model.transcribe(samples, beam_size=5)
+        segments, _info = self.model.transcribe(to_float32(samples), beam_size=5)
 
         return "".join(segment.text for segment in segments).strip()
 
 
 class OpenAIWhisperBackend:
-    """openai-whisper. Slower, but does not import PyAV or shell out to ffmpeg."""
+    """openai-whisper. No PyAV or ffmpeg, but torch has native code of its own."""
 
     name = "whisper"
 
@@ -53,14 +62,46 @@ class OpenAIWhisperBackend:
 
     def transcribe(self, samples):
 
-        result = self.model.transcribe(samples, fp16=False)
+        result = self.model.transcribe(to_float32(samples), fp16=False)
 
         return result["text"].strip()
 
 
+class OpenAIAPIBackend:
+    """Whisper API. Needs a network round trip, but no local model at all."""
+
+    name = "openai"
+
+    def __init__(self, _model_size=None):
+
+        api_key = os.getenv("OPENAI_API_KEY")
+
+        if not api_key:
+            raise BackendUnavailable(
+                "OPENAI_API_KEY is not set (add it to your .env file)."
+            )
+
+        from openai import OpenAI
+
+        self.client = OpenAI(api_key=api_key)
+        self.model = config.OPENAI_TRANSCRIBE_MODEL
+
+    def transcribe(self, samples):
+
+        audio = to_wav_file(samples)
+
+        transcription = self.client.audio.transcriptions.create(
+            model=self.model,
+            file=audio
+        )
+
+        return transcription.text.strip()
+
+
 BACKENDS = {
     FasterWhisperBackend.name: FasterWhisperBackend,
-    OpenAIWhisperBackend.name: OpenAIWhisperBackend
+    OpenAIWhisperBackend.name: OpenAIWhisperBackend,
+    OpenAIAPIBackend.name: OpenAIAPIBackend
 }
 
 
@@ -83,7 +124,7 @@ def load_backend(name, model_size):
 
         try:
             return backend(model_size)
-        except (ImportError, OSError) as error:
+        except (ImportError, OSError, BackendUnavailable) as error:
             print(f"⚠️ {backend.name} unavailable: {error}")
             errors.append(f"{backend.name}: {error}")
 
@@ -93,9 +134,26 @@ def load_backend(name, model_size):
 
 
 def to_float32(samples):
-    """Convert int16 PCM to the float32 range Whisper expects."""
+    """Convert int16 PCM to the float32 range the local models expect."""
 
     return samples.astype(np.float32).flatten() / 32768.0
+
+
+def to_wav_file(samples):
+    """Wrap int16 PCM in an in-memory wav file for upload."""
+
+    buffer = io.BytesIO()
+
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(config.SAMPLE_RATE)
+        wav.writeframes(samples.astype(np.int16).tobytes())
+
+    buffer.seek(0)
+    buffer.name = "command.wav"  # the API picks the format from the name
+
+    return buffer
 
 
 class SpeechToText:
@@ -163,7 +221,7 @@ class SpeechToText:
 
         print("🧠 Understanding...")
 
-        return self.backend.transcribe(to_float32(samples))
+        return self.backend.transcribe(samples)
 
     def listen(self):
         """Record a command and return the transcribed text."""
