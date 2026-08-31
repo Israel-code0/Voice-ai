@@ -92,5 +92,24 @@ Optional environment variables:
   microphone). Run `python -c "import sounddevice; print(sounddevice.query_devices())"`
   to list the available devices.
 - `VOICE_AI_WHISPER_MODEL` - Whisper model size, defaults to `base`.
-- `OPENAI_API_KEY` - only needed by `voice.py` and `test_api.py`, read from a
+- `VOICE_AI_STT_BACKEND` - `auto` (default), `faster-whisper` or `whisper`.
+  See below.
+- `VOICE_AI_SPEECH` - set to `0` to disable spoken replies.
+- `OPENAI_API_KEY` - only needed by the scripts in `scripts/`, read from a
   `.env` file.
+
+## Speech recognition backends
+
+`faster-whisper` is used by default. It depends on PyAV, whose bundled DLLs are
+blocked by Windows Smart App Control on some machines:
+
+```
+ImportError: DLL load failed while importing hwaccel:
+An Application Control policy has blocked this file.
+```
+
+When that happens the assistant falls back to `openai-whisper`, which needs
+neither PyAV nor ffmpeg because the recorded samples are passed to the model
+directly. Force a backend with `VOICE_AI_STT_BACKEND=whisper`, or turn off
+Smart App Control (Windows Security -> App & browser control) to keep using
+faster-whisper.

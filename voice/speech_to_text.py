@@ -1,43 +1,131 @@
-"""Microphone recording and Whisper transcription."""
+"""Microphone recording and Whisper transcription.
 
+Two backends are supported because `faster-whisper` depends on PyAV, whose
+bundled DLLs are blocked by Windows Smart App Control on some machines:
+
+- ``faster-whisper`` (default, fastest)
+- ``whisper`` (openai-whisper, PyAV free)
+
+Both are fed the recorded samples directly, so neither needs ffmpeg.
+Set ``VOICE_AI_STT_BACKEND`` to force one; the default ``auto`` tries
+faster-whisper first and falls back when its import fails.
+"""
+
+import numpy as np
 import sounddevice as sd
 from scipy.io.wavfile import write
-from faster_whisper import WhisperModel
 
 import config
 
 
+class FasterWhisperBackend:
+    """faster-whisper (CTranslate2). Requires PyAV to import."""
+
+    name = "faster-whisper"
+
+    def __init__(self, model_size):
+
+        from faster_whisper import WhisperModel
+
+        self.model = WhisperModel(
+            model_size,
+            device=config.WHISPER_DEVICE,
+            compute_type=config.WHISPER_COMPUTE_TYPE
+        )
+
+    def transcribe(self, samples):
+
+        segments, _info = self.model.transcribe(samples, beam_size=5)
+
+        return "".join(segment.text for segment in segments).strip()
+
+
+class OpenAIWhisperBackend:
+    """openai-whisper. Slower, but does not import PyAV or shell out to ffmpeg."""
+
+    name = "whisper"
+
+    def __init__(self, model_size):
+
+        import whisper
+
+        self.model = whisper.load_model(model_size)
+
+    def transcribe(self, samples):
+
+        result = self.model.transcribe(samples, fp16=False)
+
+        return result["text"].strip()
+
+
+BACKENDS = {
+    FasterWhisperBackend.name: FasterWhisperBackend,
+    OpenAIWhisperBackend.name: OpenAIWhisperBackend
+}
+
+
+def load_backend(name, model_size):
+    """Build the requested backend, or the first importable one for 'auto'."""
+
+    if name != "auto":
+
+        if name not in BACKENDS:
+            raise ValueError(
+                f"Unknown speech backend {name!r}. "
+                f"Choose from: {', '.join(BACKENDS)}, auto."
+            )
+
+        return BACKENDS[name](model_size)
+
+    errors = []
+
+    for backend in BACKENDS.values():
+
+        try:
+            return backend(model_size)
+        except (ImportError, OSError) as error:
+            print(f"⚠️ {backend.name} unavailable: {error}")
+            errors.append(f"{backend.name}: {error}")
+
+    raise RuntimeError(
+        "No speech recognition backend could be loaded.\n" + "\n".join(errors)
+    )
+
+
+def to_float32(samples):
+    """Convert int16 PCM to the float32 range Whisper expects."""
+
+    return samples.astype(np.float32).flatten() / 32768.0
+
+
 class SpeechToText:
-    """Records from the microphone and transcribes with faster-whisper.
+    """Records from the microphone and transcribes it.
 
     The model is loaded on first use so importing this module stays cheap.
     """
 
-    def __init__(self, device=None, model_size=None):
+    def __init__(self, device=None, model_size=None, backend=None):
 
         self.device = config.MICROPHONE_DEVICE if device is None else device
         self.model_size = model_size or config.WHISPER_MODEL
-        self._model = None
+        self.backend_name = backend or config.STT_BACKEND
+        self._backend = None
 
     @property
-    def model(self):
+    def backend(self):
 
-        if self._model is None:
+        if self._backend is None:
 
             print("🧠 Loading voice recognition...")
 
-            self._model = WhisperModel(
-                self.model_size,
-                device=config.WHISPER_DEVICE,
-                compute_type=config.WHISPER_COMPUTE_TYPE
-            )
+            self._backend = load_backend(self.backend_name, self.model_size)
 
-            print("✅ Voice recognition ready.")
+            print(f"✅ Voice recognition ready ({self._backend.name}).")
 
-        return self._model
+        return self._backend
 
     def record(self, filename=None, duration=None):
-        """Record audio to a wav file. Returns the path, or None on failure."""
+        """Record audio. Returns the samples, or None when recording failed."""
 
         filename = filename or config.RECORDING_FILE
         duration = duration or config.RECORDING_DURATION
@@ -65,27 +153,24 @@ class SpeechToText:
 
             return None
 
-        write(filename, config.SAMPLE_RATE, recording)
+        if filename:
+            write(filename, config.SAMPLE_RATE, recording)
 
-        return filename
+        return recording
 
-    def transcribe(self, filename=None):
-        """Transcribe a wav file."""
-
-        filename = filename or config.RECORDING_FILE
+    def transcribe(self, samples):
+        """Transcribe int16 samples recorded at config.SAMPLE_RATE."""
 
         print("🧠 Understanding...")
 
-        segments, _info = self.model.transcribe(filename, beam_size=5)
-
-        return "".join(segment.text for segment in segments).strip()
+        return self.backend.transcribe(to_float32(samples))
 
     def listen(self):
         """Record a command and return the transcribed text."""
 
-        filename = self.record()
+        samples = self.record()
 
-        if filename is None:
+        if samples is None:
             return ""
 
-        return self.transcribe(filename)
+        return self.transcribe(samples)
