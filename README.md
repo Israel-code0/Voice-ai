@@ -45,7 +45,27 @@ The long-term goal is to create a voice AI capable of navigating and controlling
 
 ## Setup
 
-Create a virtual environment:
+Create and activate a virtual environment, then install the dependencies:
 
 ```bash
 python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Run the assistant:
+
+```bash
+python main.py
+```
+
+## Configuration
+
+Optional environment variables:
+
+- `VOICE_AI_MIC_DEVICE` - input device index (defaults to the system default
+  microphone). Run `python -c "import sounddevice; print(sounddevice.query_devices())"`
+  to list the available devices.
+- `VOICE_AI_WHISPER_MODEL` - Whisper model size, defaults to `base`.
+- `OPENAI_API_KEY` - only needed by `voice.py` and `test_api.py`, read from a
+  `.env` file.

@@ -1,7 +1,7 @@
 import os
+import shutil
 import subprocess
 import webbrowser
-import time
 
 import pyautogui
 import sounddevice as sd
@@ -13,56 +13,89 @@ from faster_whisper import WhisperModel
 # SETTINGS
 # ==========================================
 
-MICROPHONE_DEVICE = 1
+# None means "use the system default input device".
+_device = os.getenv("VOICE_AI_MIC_DEVICE")
+MICROPHONE_DEVICE = int(_device) if _device and _device.isdigit() else _device
+
 SAMPLE_RATE = 16000
 RECORDING_DURATION = 5
+RECORDING_FILE = "command.wav"
+
+WHISPER_MODEL = os.getenv("VOICE_AI_WHISPER_MODEL", "base")
 
 
 # ==========================================
 # LOAD WHISPER
 # ==========================================
 
-print("🧠 Loading voice recognition...")
+_model = None
 
-model = WhisperModel(
-    "base",
-    device="cpu",
-    compute_type="int8"
-)
 
-print("✅ Voice recognition ready.")
+def get_model():
+
+    global _model
+
+    if _model is None:
+
+        print("🧠 Loading voice recognition...")
+
+        _model = WhisperModel(
+            WHISPER_MODEL,
+            device="cpu",
+            compute_type="int8"
+        )
+
+        print("✅ Voice recognition ready.")
+
+    return _model
 
 
 # ==========================================
 # APPLICATIONS
 # ==========================================
 
-APPLICATIONS = {
-    "chrome": [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        os.path.expandvars(
-            r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"
-        )
-    ],
+CHROME_PATHS = [
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    os.path.expandvars(
+        r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"
+    ),
+    "chrome.exe"
+]
 
-    "google chrome": [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        os.path.expandvars(
-            r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"
-        )
-    ],
+APPLICATIONS = {
+    "chrome": CHROME_PATHS,
+
+    "google chrome": CHROME_PATHS,
 
     "notepad": ["notepad.exe"],
 
-    "calculator": ["calc.exe"]
+    "calculator": ["calc.exe"],
+
+    "explorer": ["explorer.exe"],
+
+    "file explorer": ["explorer.exe"]
+}
+
+
+WEBSITES = {
+    "google": "https://www.google.com",
+    "youtube": "https://www.youtube.com"
 }
 
 
 # ==========================================
 # OPEN APPLICATION
 # ==========================================
+
+def resolve_executable(path):
+    """Return a launchable path, or None if the executable was not found."""
+
+    if os.path.isabs(path):
+        return path if os.path.exists(path) else None
+
+    return shutil.which(path)
+
 
 def open_application(app):
 
@@ -72,22 +105,21 @@ def open_application(app):
         print(f"❌ I don't know how to open {app}.")
         return
 
-    paths = APPLICATIONS[app]
+    for path in APPLICATIONS[app]:
 
-    for path in paths:
+        executable = resolve_executable(path)
 
-        if path.endswith(".exe"):
+        if executable is None:
+            continue
 
-            if os.path.exists(path):
-                subprocess.Popen([path])
-                print(f"✅ Opening {app}.")
-                return
-
-        else:
-
-            subprocess.Popen([path])
-            print(f"✅ Opening {app}.")
+        try:
+            subprocess.Popen([executable])
+        except OSError as error:
+            print(f"❌ Could not start {app}: {error}")
             return
+
+        print(f"✅ Opening {app}.")
+        return
 
     print(f"❌ Could not find {app}.")
 
@@ -126,44 +158,65 @@ def open_website(url):
 
 
 # ==========================================
+# NORMALIZE
+# ==========================================
+
+def normalize(text):
+    """Lowercase and drop the punctuation Whisper adds to transcriptions."""
+
+    return text.lower().strip().strip(".,!?;: ")
+
+
+# ==========================================
 # PROCESS COMMAND
 # ==========================================
 
 def process_command(text):
 
-    # Normalize capitalization
-    command = text.lower().strip()
+    command = normalize(text)
+
+    # Keep the original casing so "type Hello World" types "Hello World".
+    original = text.strip().strip(".,!?;: ")
 
     print()
     print(f"🧠 Command: {command}")
 
     # --------------------------------------
+    # EXIT
+    # --------------------------------------
+
+    if command in ["exit", "quit", "stop", "goodbye"]:
+
+        return False
+
+    # --------------------------------------
+    # WEBSITES
+    # --------------------------------------
+
+    website = None
+
+    for prefix in ["go to ", "visit ", "open ", "launch ", "start "]:
+
+        if command.startswith(prefix):
+
+            website = WEBSITES.get(command[len(prefix):].strip())
+            break
+
+    if website is not None:
+
+        open_website(website)
+
+    # --------------------------------------
     # OPEN APPLICATION
     # --------------------------------------
 
-    if command.startswith("open "):
+    elif (
+        command.startswith("open ")
+        or command.startswith("launch ")
+        or command.startswith("start ")
+    ):
 
-        app = command.replace("open ", "", 1).strip()
-
-        open_application(app)
-
-    # --------------------------------------
-    # LAUNCH APPLICATION
-    # --------------------------------------
-
-    elif command.startswith("launch "):
-
-        app = command.replace("launch ", "", 1).strip()
-
-        open_application(app)
-
-    # --------------------------------------
-    # START APPLICATION
-    # --------------------------------------
-
-    elif command.startswith("start "):
-
-        app = command.replace("start ", "", 1).strip()
+        app = command.split(" ", 1)[1].strip()
 
         open_application(app)
 
@@ -173,73 +226,31 @@ def process_command(text):
 
     elif command.startswith("type "):
 
-        text_to_type = command.replace("type ", "", 1).strip()
-
-        type_text(text_to_type)
+        type_text(original.split(" ", 1)[1].strip())
 
     # --------------------------------------
-    # ENTER
+    # KEYS
     # --------------------------------------
 
     elif command in ["enter", "press enter", "hit enter"]:
 
         press_key("enter")
 
-    # --------------------------------------
-    # SPACE
-    # --------------------------------------
-
     elif command in ["space", "press space", "hit space"]:
 
         press_key("space")
-
-    # --------------------------------------
-    # BACKSPACE
-    # --------------------------------------
 
     elif command in ["backspace", "press backspace"]:
 
         press_key("backspace")
 
-    # --------------------------------------
-    # TAB
-    # --------------------------------------
-
     elif command in ["tab", "press tab"]:
 
         press_key("tab")
 
-    # --------------------------------------
-    # ESCAPE
-    # --------------------------------------
-
     elif command in ["escape", "esc", "press escape"]:
 
         press_key("esc")
-
-    # --------------------------------------
-    # GO TO GOOGLE
-    # --------------------------------------
-
-    elif command in [
-        "go to google",
-        "open google",
-        "visit google"
-    ]:
-
-        open_website("https://www.google.com")
-
-    # --------------------------------------
-    # GO TO YOUTUBE
-    # --------------------------------------
-
-    elif command in [
-        "go to youtube",
-        "open youtube",
-        "visit youtube"
-    ]:
-
-        open_website("https://www.youtube.com")
 
     # --------------------------------------
     # CLICK
@@ -268,19 +279,6 @@ def process_command(text):
         print("🖱️ Scrolled up.")
 
     # --------------------------------------
-    # EXIT
-    # --------------------------------------
-
-    elif command in [
-        "exit",
-        "quit",
-        "stop",
-        "goodbye"
-    ]:
-
-        return False
-
-    # --------------------------------------
     # UNKNOWN COMMAND
     # --------------------------------------
 
@@ -300,62 +298,71 @@ def listen():
     print()
     print("🎙️ Listening...")
 
-    recording = sd.rec(
-        int(RECORDING_DURATION * SAMPLE_RATE),
-        samplerate=SAMPLE_RATE,
-        channels=1,
-        dtype="int16",
-        device=MICROPHONE_DEVICE
-    )
+    try:
 
-    sd.wait()
+        recording = sd.rec(
+            int(RECORDING_DURATION * SAMPLE_RATE),
+            samplerate=SAMPLE_RATE,
+            channels=1,
+            dtype="int16",
+            device=MICROPHONE_DEVICE
+        )
 
-    write(
-        "command.wav",
-        SAMPLE_RATE,
-        recording
-    )
+        sd.wait()
+
+    except sd.PortAudioError as error:
+
+        print(f"❌ Microphone error: {error}")
+        print("Set VOICE_AI_MIC_DEVICE to a device index from:")
+        print(sd.query_devices())
+
+        return ""
+
+    write(RECORDING_FILE, SAMPLE_RATE, recording)
 
     print("🧠 Understanding...")
 
-    segments, info = model.transcribe(
-        "command.wav",
-        beam_size=5
-    )
+    segments, _info = get_model().transcribe(RECORDING_FILE, beam_size=5)
 
-    text = ""
-
-    for segment in segments:
-        text += segment.text
-
-    return text.strip()
+    return "".join(segment.text for segment in segments).strip()
 
 
 # ==========================================
 # MAIN LOOP
 # ==========================================
 
-while True:
+def main():
 
-    print()
-    print("===================================")
-    print("🎙️  VOICE AI")
-    print("===================================")
-    print("Speak a command...")
-    print("Say 'exit' to stop.")
+    get_model()
 
-    command = listen()
+    while True:
 
-    print()
-    print("You said:")
-    print(command)
+        print()
+        print("===================================")
+        print("🎙️  VOICE AI")
+        print("===================================")
+        print("Speak a command...")
+        print("Say 'exit' to stop.")
 
-    if not command:
-        print("❌ I didn't hear anything.")
-        continue
+        try:
+            command = listen()
+        except KeyboardInterrupt:
+            print()
+            print("👋 Voice AI shutting down.")
+            break
 
-    should_continue = process_command(command)
+        print()
+        print("You said:")
+        print(command)
 
-    if not should_continue:
-        print("👋 Voice AI shutting down.")
-        break
+        if not command:
+            print("❌ I didn't hear anything.")
+            continue
+
+        if not process_command(command):
+            print("👋 Voice AI shutting down.")
+            break
+
+
+if __name__ == "__main__":
+    main()

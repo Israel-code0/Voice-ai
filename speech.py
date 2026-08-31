@@ -1,62 +1,71 @@
+import os
+import time
+
 import sounddevice as sd
 from scipy.io.wavfile import write
 from faster_whisper import WhisperModel
-import time
 
 
-# Microphone device
-MICROPHONE_DEVICE = 1
+# None means "use the system default input device".
+_device = os.getenv("VOICE_AI_MIC_DEVICE")
+MICROPHONE_DEVICE = int(_device) if _device and _device.isdigit() else _device
 
-# Whisper model
-print("Loading speech recognition model...")
+DURATION = 5
+SAMPLE_RATE = 16000
+RECORDING_FILE = "test_recording.wav"
 
-model = WhisperModel(
-    "base",
-    device="cpu",
-    compute_type="int8"
-)
 
-print("✅ Speech recognition ready.")
+def main():
 
-# Recording settings
-duration = 5
-sample_rate = 16000
+    print("Loading speech recognition model...")
 
-print()
-print("🎙️ Get ready...")
-time.sleep(2)
+    model = WhisperModel(
+        "base",
+        device="cpu",
+        compute_type="int8"
+    )
 
-print("🎙️ Listening...")
+    print("✅ Speech recognition ready.")
 
-recording = sd.rec(
-    int(duration * sample_rate),
-    samplerate=sample_rate,
-    channels=1,
-    dtype="int16",
-    device=MICROPHONE_DEVICE
-)
+    print()
+    print("🎙️ Get ready...")
+    time.sleep(2)
 
-sd.wait()
+    print("🎙️ Listening...")
 
-write(
-    "test_recording.wav",
-    sample_rate,
-    recording
-)
+    try:
 
-print("✅ Recording finished.")
-print("🧠 Understanding what you said...")
+        recording = sd.rec(
+            int(DURATION * SAMPLE_RATE),
+            samplerate=SAMPLE_RATE,
+            channels=1,
+            dtype="int16",
+            device=MICROPHONE_DEVICE
+        )
 
-segments, info = model.transcribe(
-    "test_recording.wav",
-    beam_size=5
-)
+        sd.wait()
 
-text = ""
+    except sd.PortAudioError as error:
 
-for segment in segments:
-    text += segment.text
+        print(f"❌ Microphone error: {error}")
+        print("Set VOICE_AI_MIC_DEVICE to a device index from:")
+        print(sd.query_devices())
 
-print()
-print("You said:")
-print(text.strip())
+        return
+
+    write(RECORDING_FILE, SAMPLE_RATE, recording)
+
+    print("✅ Recording finished.")
+    print("🧠 Understanding what you said...")
+
+    segments, _info = model.transcribe(RECORDING_FILE, beam_size=5)
+
+    text = "".join(segment.text for segment in segments)
+
+    print()
+    print("You said:")
+    print(text.strip())
+
+
+if __name__ == "__main__":
+    main()

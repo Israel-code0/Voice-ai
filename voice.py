@@ -1,4 +1,5 @@
 import os
+
 import sounddevice as sd
 from scipy.io.wavfile import write
 from dotenv import load_dotenv
@@ -6,29 +7,43 @@ from openai import OpenAI
 
 load_dotenv()
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+SAMPLE_RATE = 16000
+
+
+def get_client():
+
+    api_key = os.getenv("OPENAI_API_KEY")
+
+    if not api_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY is not set. Add it to your .env file."
+        )
+
+    return OpenAI(api_key=api_key)
 
 
 def record_audio(filename="command.wav", duration=5):
-    sample_rate = 16000
 
     print("🎙️ Listening...")
 
     recording = sd.rec(
-        int(duration * sample_rate),
-        samplerate=sample_rate,
+        int(duration * SAMPLE_RATE),
+        samplerate=SAMPLE_RATE,
         channels=1,
         dtype="int16"
     )
 
     sd.wait()
 
-    write(filename, sample_rate, recording)
+    write(filename, SAMPLE_RATE, recording)
 
     print("Recording finished.")
 
 
-def transcribe_audio(filename="command.wav"):
+def transcribe_audio(filename="command.wav", client=None):
+
+    client = client or get_client()
+
     with open(filename, "rb") as audio_file:
         transcription = client.audio.transcriptions.create(
             model="whisper-1",
@@ -38,8 +53,14 @@ def transcribe_audio(filename="command.wav"):
     return transcription.text
 
 
-record_audio()
+def main():
 
-text = transcribe_audio()
+    client = get_client()
 
-print("You said:", text)
+    record_audio()
+
+    print("You said:", transcribe_audio(client=client))
+
+
+if __name__ == "__main__":
+    main()
